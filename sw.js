@@ -1,4 +1,4 @@
-const C="ticket-scanner-v5-6-2";
+const C="ticket-scanner-v5-7";
 self.addEventListener("install",e=>e.waitUntil(
   caches.open(C).then(c=>c.addAll([
     "./","./index.html","./manifest.webmanifest","./src/app.js","./src/styles.css"

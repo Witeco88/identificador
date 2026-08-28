@@ -49,8 +49,16 @@ Tot el que aparegui després del TOTAL s'ha d'ignorar.
 ## V5.6.1 — correcció de l'última línia abans del TOTAL
 La selecció de productes ara manté les files amb text + import abans de la frontera TOTAL i recupera una fila immediatament anterior si el seu import tanca matemàticament el TOTAL.
 
-## V5.6.2 — reparació de JavaScript i caché
+## V5.7 — reparació de JavaScript i caché
 - Corregida la declaració duplicada de `productCandidates` que impedia executar `app.js`.
 - Verificat amb `node --check`.
 - Service Worker amb caché `ticket-scanner-v5-6-2`, eliminació de caches antigues i `skipWaiting`/`clients.claim`.
-- Recursos principals amb cache-busting `?v=5.6.2`.
+- Recursos principals amb cache-busting `?v=5.7`.
+
+## V5.7 — Enhanced OCR
+- Tesseract continua sent el motor local principal.
+- S'afegeix PaddleOCR.js (PP-OCRv5) com a segon motor opcional al navegador.
+- El segon motor només s'intenta quan la confiança o la validació indiquen risc.
+- Els resultats es fusionen conservant text, score i geometria.
+- Si PaddleOCR no es pot carregar, l'aplicació continua amb Tesseract.
+- No s'envien fotografies a un servidor propi; la inferència del segon motor es fa al navegador, tot i que els fitxers de la llibreria/model es carreguen des del CDN.

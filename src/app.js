@@ -137,17 +137,45 @@ function chooseTotal(lines){
   }
   return candidates.sort((a,b)=>b.score-a.score)[0]||null;
 }
-function itemRowsBefore(lines, endIndex){
-  // Build a candidate product block. Rows with a price in the right-hand price
-  // column are the primary candidates; fiscal/payment/footer rows are excluded.
+function plausibleProductName(text){
+  const n=normText(text).trim();
+  if(!n || n.length<2) return false;
+  if(fiscalLike(n)||paymentLike(n)||footerLike(n)||totalLike(n)) return false;
+  if(/\b(subtotal|sub\s*total|sous[- ]total|zwischensumme|subtotale|service|servicio|servei|servizio|servico|serviço|dienstleistung|bedienung|tip|propina|pourboire|mancia|gorjeta|trinkgeld|descuento|discount|remise|sconto|desconto|rabatt|korting)\b/i.test(n)) return false;
+  return /[a-zà-ÿ]/i.test(n);
+}
+function productRowCandidate(l){
+  if(!l || !l.money) return false;
+  return plausibleProductName(String(l.text||"").replace(l.money.raw,"").trim());
+}
+function itemRowsBefore(lines,endIndex){
   const rows=[];
   for(let i=0;i<endIndex;i++){
     const l=lines[i];
-    if(!l.money || !productish(l.text))continue;
-    rows.push({...l, role:"PRODUCT"});
+    if(productRowCandidate(l)) rows.push({...l,role:"PRODUCT",_sourceIndex:i});
   }
   return rows;
 }
+function recoverDroppedLastItems(lines,boundary,rows,totalValue){
+  if(totalValue==null) return rows;
+  const used=new Set(rows.map(r=>r._sourceIndex));
+  let sum=Math.round(rows.reduce((a,r)=>a+(r.money?.value||0),0)*100)/100;
+  for(let i=boundary-1;i>=0;i--){
+    if(used.has(i)) continue;
+    const l=lines[i];
+    if(!l?.money) continue;
+    const name=String(l.text||"").replace(l.money.raw,"").trim();
+    if(!plausibleProductName(name)) continue;
+    const candidate=l.money.value;
+    const difference=Math.round((totalValue-sum)*100)/100;
+    if(Math.abs(candidate-difference)<=0.02){
+      rows.push({...l,role:"PRODUCT",_sourceIndex:i,_recovered:true});
+      break;
+    }
+  }
+  return rows.sort((x,y)=>x._sourceIndex-y._sourceIndex);
+}
+
 function chooseImplicitTotal(lines){
   // Consider unlabeled amounts only after a contiguous product block. Prefer a
   // candidate that exactly matches the sum of product candidates immediately above.
@@ -177,13 +205,16 @@ function parse(lines){
   }
 
   const boundary=totalCand?totalCand.i:lines.length;
+  let productCandidates=itemRowsBefore(lines,boundary);
+  if(totalCand?.line?.money?.value!=null){
+    productCandidates=recoverDroppedLastItems(lines,boundary,productCandidates,totalCand.line.money.value);
+  }
   const productCandidates=itemRowsBefore(lines,boundary);
 
   // Detect a fiscal/table zone. A row with fiscal language or a repeated
   // multi-amount structure is never promoted to PRODUCT.
   let fiscalZone=false, rows=[];
-  for(let i=0;i<boundary;i++){
-    const l=lines[i];
+  for(const l of productCandidates){
     const t=l.text||"";
     if(fiscalLike(t)) { fiscalZone=true; continue; }
     if(paymentLike(t)||footerLike(t)) continue;
@@ -203,7 +234,7 @@ function parse(lines){
       quantity,
       amount:l.money.value,
       confidence:Math.min(0.99,Math.max(0.05,(l.confidence||0.5)*0.98)),
-      sourceLine:l.id
+      sourceLine:l.id, recovered:!!l._recovered
     });
   }
 

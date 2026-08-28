@@ -1,3 +1,4 @@
+const APP_VERSION="5.7.1";
 const $=id=>document.getElementById(id);
 const V={home:$("home"),processing:$("processing"),result:$("result"),diagnostic:$("diagnostic")};
 let lastResult=null,lastLines=[],lastOCR=null;

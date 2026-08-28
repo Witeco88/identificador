@@ -1,68 +1,21 @@
 <!doctype html>
-<html lang="ca">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#111827">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="stylesheet" href="src/styles.css">
-<title>REPARTIDOR TICKET SCANNER</title>
-</head>
-<body>
-<div id="app">
-<header><div class="brand"><span class="mark">R</span><div><small>REPARTIDOR</small><b>TICKET SCANNER</b></div></div><span class="pill">V5</span></header>
-
-<section id="home" class="page active">
-  <div class="hero"><div class="receipt">🧾</div><h1>Obre un tiquet</h1><p>La fotografia es processa al navegador. No hi ha backend de Ticket Scanner.</p></div>
-  <div class="actions">
-    <label class="action primary"><span>📷</span><div><b>FER FOTO</b><small>Càmera de l'iPhone</small></div><i>›</i><input id="camera" type="file" accept="image/*" capture="environment"></label>
-    <label class="action"><span>🖼️</span><div><b>SELECCIONAR FOTO</b><small>Fotos o Fitxers</small></div><i>›</i><input id="file" type="file" accept="image/*"></label>
-  </div>
-  <div class="privacy">🔒 Processament local · PWA · compatible amb GitHub Pages</div>
-  <div id="engine" class="engine">Comprovant motor OCR…</div>
-  <button id="engineDiag" class="engine-diag">Diagnòstic del motor</button>
-</section>
-
-<section id="scan" class="page">
-  <div class="scan-head"><button class="back" id="cancel">‹</button><div><small>ANÀLISI</small><h2 id="stage">Preparant…</h2></div></div>
-  <div class="scan-preview"><img id="scanImage"><div id="scanLine" class="scan-line"></div></div>
-  <div class="progress"><div id="bar"></div></div>
-  <div class="percent"><b id="percent">0%</b><span id="phase">Inicialitzant</span></div>
-  <div class="phase-list">
-    <div id="p1"><span>1</span> Fotografia <b>…</b></div>
-    <div id="p2"><span>2</span> Preprocessament <b>…</b></div>
-    <div id="p3"><span>3</span> Motor OCR <b>…</b></div>
-    <div id="p4"><span>4</span> Lectura del text <b>…</b></div>
-    <div id="p5"><span>5</span> Resultat <b>…</b></div>
-  </div>
-  <p id="detail" class="scan-detail">Preparant.</p>
-  <button id="cancel2" class="cancel">Cancel·lar</button>
-</section>
-
-<section id="result" class="page">
-  <div class="scan-head"><button class="back" id="again">‹</button><div><small>RESULTAT</small><h2>Tiquet llegit</h2></div></div>
-  <div class="ok"><span>✓</span><div><b>OCR completat</b><small id="summary"></small></div></div>
-  <img id="resultImage" class="result-image">
-  <div class="metrics"><div><b id="lines">0</b><small>línies</small></div><div><b id="words">0</b><small>blocs</small></div><div><b id="conf">0%</b><small>confiança</small></div></div>
-  <section class="card"><small>TEXT DETECTAT</small><h3>OCR</h3><div id="text"></div></section>
-  <button id="diagnostic" class="secondary">🔍 MODE DIAGNÒSTIC</button>
-</section>
-
-<section id="diag" class="page">
-  <div class="scan-head"><button class="back" id="diagBack">‹</button><div><small>DIAGNÒSTIC</small><h2>Pipeline OCR</h2></div></div>
-  <section class="card"><small>A · ORIGINAL</small><img id="diagImg" class="diag-img"></section>
-  <section class="card"><small>B · PREPROCESSAMENT</small><canvas id="processed"></canvas></section>
-  <section class="card"><small>C · BOUNDING BOXES</small><canvas id="boxes"></canvas></section>
-  <section class="card"><small>D · OCR CRU</small><pre id="raw"></pre></section>
-  <section class="card"><small>E · BLOCS OCR</small><div id="blocks"></div></section>
-</section>
-
-<div id="error" class="error hidden"><div><b>⚠️ No s'ha pogut llegir el tiquet</b><p id="errorText"></p><button id="retry">Tornar a provar</button></div></div>
-</div>
-<script src="ocr/tesseract.min.js" onerror="window.__ocrScriptError=true"></script>
-<script src="src/app.js"></script>
-<div id="engineModal" class="error hidden"><div><b>Diagnòstic del motor OCR</b><div id="engineReport" class="engine-report"></div><button id="closeEngine">Tancar</button></div></div>
-</body>
-</html>
+<html lang="ca"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111827"><link rel="manifest" href="./manifest.webmanifest">
+<title>Repartidor Ticket Scanner</title><link rel="stylesheet" href="./src/styles.css">
+</head><body><main class="app">
+<header><div><small>REPARTIDOR</small><h1>TICKET SCANNER</h1></div><button id="diag">⚙︎</button></header>
+<section id="home"><div class="hero"><div>🧾</div><h2>Analitza un tiquet</h2><p>Fes una foto o selecciona una fotografia existent.</p></div>
+<div class="actions"><button id="camera" class="primary">📷 Fer foto</button><button id="gallery" class="secondary">🖼️ Seleccionar fotografia</button></div>
+<input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
+<input id="galleryInput" type="file" accept="image/*" hidden>
+<div id="status" class="card">Comprovant el motor OCR…</div></section>
+<section id="processing" class="hidden center"><div class="spinner"></div><h2>Analitzant tiquet…</h2><div id="pl">Preparant fotografia…</div><div class="progress"><i id="pb"></i></div><b id="pp">0%</b></section>
+<section id="result" class="hidden"><div class="head"><div><small>RESULTAT</small><h2>Tiquet detectat</h2></div><b id="review" class="badge hidden">Revisar</b></div>
+<div id="summary" class="summary"></div><div id="warnings" class="warnings hidden"></div>
+<div class="card"><b>Productes <span id="count"></span></b><div id="items"></div><button id="add">＋ Afegir producte</button></div>
+<div class="card totals"><label>Subtotal <input id="subtotal"></label><label>IVA / impostos <input id="tax"></label><label>Servei <input id="service"></label><label>Propina <input id="tip"></label><label>Descompte <input id="discount"></label><strong>TOTAL <input id="total"></strong></div>
+<div class="actions"><button id="json" class="primary">Exportar JSON</button><button id="new" class="secondary">Nou tiquet</button></div></section>
+<section id="diagnostic" class="hidden"><div class="head"><div><small>DIAGNÒSTIC</small><h2>Motor i lectura</h2></div><button id="close">✕</button></div>
+<pre id="dout" class="diagnostic"></pre><div class="card"><b>OCR</b><pre id="ot">—</pre></div><div class="card"><b>Línies reconstruïdes</b><pre id="lt">—</pre></div><div class="card"><b>Classificació</b><pre id="ct">—</pre></div></section>
+</main><script src="./ocr/tesseract.min.js"></script><script src="./src/app.js" defer></script></body></html>

@@ -1,4 +1,4 @@
-name: Deploy Ticket Scanner V5.4
+name: Deploy Ticket Scanner V5.5.1
 on:
   push:
     branches: [main]
@@ -29,7 +29,7 @@ jobs:
           curl --fail --retry 3 -L https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js -o public/ocr/tesseract.min.js
           curl --fail --retry 3 -L https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js -o public/ocr/worker.min.js
           for f in tesseract-core.wasm.js tesseract-core-simd.wasm.js tesseract-core-lstm.wasm.js tesseract-core-simd-lstm.wasm.js; do curl --fail --retry 3 -L "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1/$f" -o "public/ocr/core/$f"; done
-          for l in cat spa eng; do curl --fail --retry 3 -L "https://tessdata.projectnaptha.com/4.0.0/$l.traineddata.gz" -o "public/ocr/lang/$l.traineddata.gz"; done
+          for l in cat spa eng nld fra deu ita por; do curl --fail --retry 3 -L "https://tessdata.projectnaptha.com/4.0.0/$l.traineddata.gz" -o "public/ocr/lang/$l.traineddata.gz"; done
       - name: Verify
         run: |
           set -euo pipefail
@@ -43,6 +43,11 @@ jobs:
           test -s public/ocr/lang/cat.traineddata.gz
           test -s public/ocr/lang/spa.traineddata.gz
           test -s public/ocr/lang/eng.traineddata.gz
+          test -s public/ocr/lang/nld.traineddata.gz
+          test -s public/ocr/lang/fra.traineddata.gz
+          test -s public/ocr/lang/deu.traineddata.gz
+          test -s public/ocr/lang/ita.traineddata.gz
+          test -s public/ocr/lang/por.traineddata.gz
           echo "=== FILES TO PUBLISH ==="
           find public -type f | sort
       - uses: actions/upload-pages-artifact@v3

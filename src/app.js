@@ -80,6 +80,97 @@ function linesFromWords(words){
 }
 function lineData(d){if(d.words?.length)return linesFromWords(d.words);if(d.lines?.length)return (d.lines || []).map((l,i)=>({id:"line-"+(i+1),text:l.text.trim(),confidence:(l.confidence||0)/100,money:money(l.text),y:l.bbox?.y0||i,y0:l.bbox?.y0||i,y1:l.bbox?.y1||i+1,words:[]}));return String(d.text||"").split(/\n+/).map((text,i)=>({id:"line-"+(i+1),text:text.trim(),confidence:0,money:money(text),y:i})).filter(x=>x.text)}
 function productName(s,m){let n=s.replace(m?.raw||"","").replace(/^[-–—•#]/,"").trim(),q=1,x=n.match(/^(\d+)\s*(?:x|×|\*)\s*/i);if(x){q=+x[1];n=n.slice(x[0].length).trim()}else{x=n.match(/^(\d+)\s+(?=[A-Za-zÀ-ÿ])/);if(x){q=+x[1];n=n.slice(x[0].length).trim()}}return{name:n||"Concepte sense nom",quantity:q}}
+
+/* V5.7 Enhanced OCR: optional PaddleOCR.js second engine.
+   Tesseract remains the local fallback. Paddle is invoked only when the
+   primary result is weak or mathematically inconsistent. */
+let paddleOCRInstance = null;
+let paddleOCRPromise = null;
+
+function loadExternalScriptOnce(src){
+  return new Promise((resolve,reject)=>{
+    const existing=[...document.scripts].find(x=>x.src===new URL(src,location.href).href);
+    if(existing){ existing.addEventListener("load",()=>resolve(),{once:true}); existing.addEventListener("error",reject,{once:true}); if(existing.dataset.loaded==="1") resolve(); return; }
+    const el=document.createElement("script");
+    el.src=src; el.async=true;
+    el.onload=()=>{el.dataset.loaded="1";resolve();};
+    el.onerror=()=>reject(new Error("No s'ha pogut carregar PaddleOCR.js"));
+    document.head.appendChild(el);
+  });
+}
+
+async function getPaddleOCR(){
+  if(paddleOCRInstance) return paddleOCRInstance;
+  if(paddleOCRPromise) return paddleOCRPromise;
+  paddleOCRPromise=(async()=>{
+    // Browser SDK is published as an ES module. Importing it dynamically keeps
+    // the base app functional if the optional engine is unavailable.
+    const mod=await import("https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js/+esm");
+    const PaddleOCR=mod.PaddleOCR||mod.default?.PaddleOCR||mod.default;
+    if(!PaddleOCR) throw new Error("PaddleOCR no disponible");
+    const ocr=await PaddleOCR.create({
+      lang:"en",
+      ocrVersion:"PP-OCRv5",
+      worker:true,
+      ortOptions:{backend:"wasm",numThreads:2,simd:true}
+    });
+    paddleOCRInstance=ocr;
+    return ocr;
+  })();
+  try{return await paddleOCRPromise;}
+  catch(e){paddleOCRPromise=null;throw e;}
+}
+
+function paddleItemsToOCRLines(result){
+  const items=Array.isArray(result?.items)?result.items:[];
+  return items.map((it,i)=>{
+    const poly=Array.isArray(it.poly)?it.poly:[];
+    const xs=poly.map(p=>Array.isArray(p)?p[0]:0), ys=poly.map(p=>Array.isArray(p)?p[1]:0);
+    const x=xs.length?Math.min(...xs):0, y=ys.length?Math.min(...ys):0;
+    const width=xs.length?Math.max(...xs)-x:0, height=ys.length?Math.max(...ys)-y:0;
+    return {
+      id:"paddle-"+i,
+      text:String(it.text||"").trim(),
+      confidence:Number(it.score??0),
+      bbox:{x,y,width,height},
+      engine:"paddle"
+    };
+  }).filter(x=>x.text);
+}
+
+async function runPaddleSecondary(file){
+  const ocr=await getPaddleOCR();
+  const [result]=await ocr.predict(file);
+  return paddleItemsToOCRLines(result);
+}
+
+function shouldRunSecondaryOCR(parsed){
+  const totalConf=Number(parsed?.totalConfidence??0);
+  const overall=Number(parsed?.overallConfidence??0);
+  const warnings=Array.isArray(parsed?.warnings)?parsed.warnings:[];
+  return totalConf<0.90 || overall<0.88 ||
+    warnings.some(w=>/inconsistent|ambiguous|missing|not found|low confidence|import/i.test(String(w)));
+}
+
+async function mergeSecondaryOCR(primaryLines, secondaryLines){
+  const all=[...(Array.isArray(primaryLines)?primaryLines:[])];
+  for(const p of (Array.isArray(secondaryLines)?secondaryLines:[])){
+    const near=all.findIndex(x=>{
+      const a=x.bbox||{}, b=p.bbox||{};
+      const yc=Math.abs((a.y||0)-(b.y||0)) <= Math.max(24,(a.height||20)*1.8);
+      const xc=Math.abs((a.x||0)-(b.x||0)) <= 160;
+      return yc&&xc;
+    });
+    if(near<0) all.push(p);
+    else if(Number(p.confidence||0)>Number(all[near].confidence||0)+0.08){
+      all[near]={...all[near],...p,engine:"paddle+primary"};
+    } else if(String(all[near].text||"").length<3 && p.text){
+      all[near]={...all[near],text:p.text,engine:"paddle+primary"};
+    }
+  }
+  return all;
+}
+
 function normText(s){
   return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
 }
@@ -318,3 +409,15 @@ $("camera").onclick=()=>$("cameraInput").click();$("gallery").onclick=()=>$("gal
 $("diag").onclick=async()=>{show(V.diagnostic);let p=["./ocr/tesseract.min.js","./ocr/worker.min.js","./ocr/core/tesseract-core.wasm.js","./ocr/core/tesseract-core-simd.wasm.js","./ocr/core/tesseract-core-lstm.wasm.js","./ocr/core/tesseract-core-simd-lstm.wasm.js","./ocr/lang/cat.traineddata.gz","./ocr/lang/spa.traineddata.gz","./ocr/lang/eng.traineddata.gz","./ocr/lang/nld.traineddata.gz","./ocr/lang/fra.traineddata.gz","./ocr/lang/deu.traineddata.gz","./ocr/lang/ita.traineddata.gz","./ocr/lang/por.traineddata.gz"],a=[window.Tesseract?"Tesseract API: OK":"Tesseract API: NO"];for(let x of p){try{let r=await fetch(x,{cache:"no-store"});a.push(`${x}: ${r.ok?"OK":"ERROR ("+r.status+")"}`)}catch{a.push(`${x}: ERROR`)}}$("dout").textContent=a.join("\n")};$("close").onclick=()=>show(lastResult?V.result:V.home);
 $("add").onclick=()=>addRow({quantity:1,name:"",amount:0});$("new").onclick=()=>{lastResult=null;show(V.home)};$("json").onclick=()=>{let b=new Blob([JSON.stringify(lastResult,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ticket-result.json";a.click()};
 $("status").textContent=window.Tesseract?"✓ Motor OCR carregat. Pots seleccionar una fotografia.":"⚠️ Motor OCR no carregat. Revisa el desplegament de GitHub Pages.";
+
+
+async function enhanceWithPaddleIfNeeded(file, primaryLines, parsed){
+  if(!file || !shouldRunSecondaryOCR(parsed)) return {lines:primaryLines,used:false,error:null};
+  try{
+    const secondary=await runPaddleSecondary(file);
+    return {lines:await mergeSecondaryOCR(primaryLines,secondary),used:true,error:null};
+  }catch(error){
+    console.warn("PaddleOCR secundari no disponible:",error);
+    return {lines:primaryLines,used:false,error:String(error?.message||error)};
+  }
+}

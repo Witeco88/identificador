@@ -1,4 +1,4 @@
-name: Deploy Ticket Scanner V5.3
+name: Deploy Ticket Scanner V5.4
 on:
   push:
     branches: [main]

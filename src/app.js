@@ -73,27 +73,190 @@ function linesFromWords(words){
 }
 function lineData(d){if(d.words?.length)return linesFromWords(d.words);if(d.lines?.length)return d.lines.map((l,i)=>({id:"line-"+(i+1),text:l.text.trim(),confidence:(l.confidence||0)/100,money:money(l.text),y:l.bbox?.y0||i,y0:l.bbox?.y0||i,y1:l.bbox?.y1||i+1,words:[]}));return String(d.text||"").split(/\n+/).map((text,i)=>({id:"line-"+(i+1),text:text.trim(),confidence:0,money:money(text),y:i})).filter(x=>x.text)}
 function productName(s,m){let n=s.replace(m?.raw||"","").replace(/^[-–—•#]/,"").trim(),q=1,x=n.match(/^(\d+)\s*(?:x|×|\*)\s*/i);if(x){q=+x[1];n=n.slice(x[0].length).trim()}else{x=n.match(/^(\d+)\s+(?=[A-Za-zÀ-ÿ])/);if(x){q=+x[1];n=n.slice(x[0].length).trim()}}return{name:n||"Concepte sense nom",quantity:q}}
-function parse(lines){
-  // First identify an explicit total. If OCR split "Totaal" and its amount
-  // into adjacent rows, combine them before applying the hard boundary.
-  let normalized=[];
+function normText(s){
+  return String(s||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+}
+function fiscalLike(s){
+  const n=normText(s);
+  return /\b(netto|net|btw|vat|iva|tax|taxable|belasting|incl|excl)\b/i.test(n) ||
+         /\b(9|10|21|20|6)%\b/.test(n);
+}
+function paymentLike(s){
+  return /\b(visa|mastercard|maestro|pin|cash|contant|card|kaart|payment|betaald|change|wisselgeld)\b/i.test(String(s));
+}
+function footerLike(s){
+  return /\b(bedankt|dank|dankjewel|dank u|thanks|thank you|gracias|merci|grazie|obrigad|enquete|survey|www\.|http|facebook|instagram)\b/i.test(normText(s));
+}
+function productish(s){
+  const n=normText(s);
+  return !totalLike(s) && !fiscalLike(s) && !paymentLike(s) && !footerLike(s) &&
+         !/\b(subtotal|sous-total|service|servicio|servizio|dienst|tip|propina|pourboire|descuento|discount|korting)\b/i.test(n);
+}
+function amountOnly(s){
+  const t=String(s).trim();
+  const mm=money(t);
+  if(!mm)return false;
+  return t.replace(/€|\d|[,\.\s\-]/g,"")==="";
+}
+function sectionScore(lines, i){
+  const l=lines[i], t=l.text||"";
+  let score=0;
+  if(totalLike(t))score+=100;
+  if(l.money)score+=10;
+  // A total near the end of the item block is more likely than a random amount.
+  const remaining=lines.length-i-1;
+  if(remaining>=0) score+=Math.max(0,20-Math.min(20,remaining));
+  if(i>0 && lines[i-1].money)score+=2;
+  return score;
+}
+function chooseTotal(lines){
+  const candidates=[];
   for(let i=0;i<lines.length;i++){
-    let l=lines[i], n=lines[i+1];
-    if(n && totalLike(l.text) && !l.money && n.money){
-      normalized.push({...l,text:`${l.text} ${n.text}`,money:n.money,
-        confidence:Math.min(l.confidence||.5,n.confidence||.5)});
-      i++; continue;
+    const l=lines[i];
+    if(l.money && totalLike(l.text)){
+      candidates.push({i,line:l,score:sectionScore(lines,i),explicit:true,reasons:["explicit total label"]});
     }
-    normalized.push(l);
   }
-  lines=normalized;
-  let wi=-1;
-  for(let i=0;i<lines.length;i++)if(totalLike(lines[i].text)&&lines[i].money){wi=i;break}
-  let implicit=false,w=[];if(wi<0){let m=lines.map((l,i)=>({l,i})).filter(x=>x.l.money);if(m.length>1){let last=m.at(-1),prior=m.slice(0,-1).filter(x=>type(x.l.text)==="UNKNOWN");let sum=prior.reduce((s,x)=>s+x.l.money.value,0);if(Math.abs(sum-last.l.money.value)<=.02){wi=last.i;implicit=true;w.push("Possible total detectat sense etiqueta explícita.")}}}
-let before=wi>=0?lines.slice(0,wi):lines,items=[],special={subtotal:null,tax:null,service:0,tip:0,discount:0},cls=[];
-for(const l of before){let t=type(l.text);cls.push({line:l.text,type:t,amount:l.money?.value??null});if(["SUBTOTAL","TAX","SERVICE","TIP","DISCOUNT"].includes(t)&&l.money){let k=t==="TAX"?"tax":t.toLowerCase();special[k]=l.money.value}else if(t==="UNKNOWN"&&l.money){let p=productName(l.text,l.money);items.push({id:"item-"+(items.length+1),name:p.name,quantity:p.quantity,amount:l.money.value,confidence:Math.max(.01,Math.min(1,l.confidence||.5))});}}
-let total=wi>=0?lines[wi].money.value:null,sum=items.reduce((s,x)=>s+x.amount,0),warnings=[...w];if(total==null)warnings.push("No s'ha pogut identificar el TOTAL.");let calc=sum+(special.tax||0)+special.service+special.tip-special.discount;if(total!=null&&Math.abs(calc-total)>.02)warnings.push(`Càlcul inconsistent: ${calc.toFixed(2)} € vs ${total.toFixed(2)} €.`);if(items.some(x=>x.confidence<.75))warnings.push("Una o més línies tenen OCR amb baixa confiança.");
-return{version:"1.0",currency:"EUR",items,subtotal:special.subtotal??Math.round(sum*100)/100,tax:special.tax,service:special.service,tip:special.tip,discount:special.discount,total,confidence:Number((items.length?items.reduce((s,x)=>s+x.confidence,0)/items.length:.5).toFixed(2)),needsReview:warnings.length>0,warnings,diagnostics:{explicitTotal:!implicit,totalLineIndex:wi,ignoredAfterTotal:wi>=0?lines.slice(wi+1).map(x=>x.text):[],classifications:cls}}}
+  // Also detect a total label and amount split over adjacent OCR rows.
+  for(let i=0;i<lines.length-1;i++){
+    if(totalLike(lines[i].text)&&!lines[i].money&&lines[i+1].money){
+      candidates.push({
+        i:i+1,
+        line:{...lines[i],text:`${lines[i].text} ${lines[i+1].text}`,money:lines[i+1].money,
+              confidence:Math.min(lines[i].confidence||.5,lines[i+1].confidence||.5)},
+        score:120,explicit:true,reasons:["explicit total label","label and amount reconstructed"]
+      });
+    }
+  }
+  return candidates.sort((a,b)=>b.score-a.score)[0]||null;
+}
+function itemRowsBefore(lines, endIndex){
+  // Build a candidate product block. Rows with a price in the right-hand price
+  // column are the primary candidates; fiscal/payment/footer rows are excluded.
+  const rows=[];
+  for(let i=0;i<endIndex;i++){
+    const l=lines[i];
+    if(!l.money || !productish(l.text))continue;
+    rows.push({...l, role:"PRODUCT"});
+  }
+  return rows;
+}
+function chooseImplicitTotal(lines){
+  // Consider unlabeled amounts only after a contiguous product block. Prefer a
+  // candidate that exactly matches the sum of product candidates immediately above.
+  let best=null;
+  for(let i=0;i<lines.length;i++){
+    const l=lines[i];
+    if(!l.money || !amountOnly(l.text))continue;
+    const before=itemRowsBefore(lines,i);
+    if(before.length<2)continue;
+    const sum=Math.round(before.reduce((a,r)=>a+(r.money?.value||0),0)*100)/100;
+    const diff=Math.abs(sum-l.money.value);
+    if(diff<=0.02){
+      const score=100 + before.length*5 - Math.min(20,i/10);
+      if(!best || score>best.score)best={i,line:l,score,reasons:["implicit total","matches product sum"]};
+    }
+  }
+  return best;
+}
+function parse(lines){
+  // Lines have already been reconstructed from OCR bounding boxes. First find
+  // an explicit total. It becomes a hard spatial boundary.
+  let totalCand=chooseTotal(lines);
+  let implicit=false;
+  if(!totalCand){
+    totalCand=chooseImplicitTotal(lines);
+    implicit=!!totalCand;
+  }
+
+  const boundary=totalCand?totalCand.i:lines.length;
+  const productCandidates=itemRowsBefore(lines,boundary);
+
+  // Detect a fiscal/table zone. A row with fiscal language or a repeated
+  // multi-amount structure is never promoted to PRODUCT.
+  let fiscalZone=false, rows=[];
+  for(let i=0;i<boundary;i++){
+    const l=lines[i];
+    const t=l.text||"";
+    if(fiscalLike(t)) { fiscalZone=true; continue; }
+    if(paymentLike(t)||footerLike(t)) continue;
+    if(!l.money || !productish(t)) continue;
+
+    // Quantity is intentionally conservative.
+    let quantity=1,name=t.replace(l.money.raw,"").trim();
+    const qm=name.match(/^(?:(\d+(?:[.,]\d+)?)\s*[x×*]\s*)/i);
+    if(qm){quantity=Math.max(1,Number(qm[1].replace(",",".")));name=name.slice(qm[0].length).trim();}
+    // Remove a standalone leading quantity only when followed by a plausible name.
+    name=name.replace(/^\s*(\d+)\s+(?=[A-Za-zÀ-ÿ])/,"").trim();
+
+    if(!name || !/[A-Za-zÀ-ÿ]/.test(name))continue;
+    rows.push({
+      id:`item-${rows.length+1}`,
+      name,
+      quantity,
+      amount:l.money.value,
+      confidence:Math.min(0.99,Math.max(0.05,(l.confidence||0.5)*0.98)),
+      sourceLine:l.id
+    });
+  }
+
+  const total=totalCand?.line?.money?.value??null;
+  let subtotal=null,tax=0,service=0,tip=0,discount=0;
+  const warnings=[];
+
+  // Classify labeled charges only before the total boundary.
+  for(let i=0;i<boundary;i++){
+    const t=normText(lines[i].text);
+    const val=lines[i].money?.value;
+    if(val==null)continue;
+    if(/\b(subtotal|sous-total|subtotaal)\b/.test(t)) subtotal=val;
+    else if(/\b(iva|vat|tax|btw|belasting)\b/.test(t)) tax+=val;
+    else if(/\b(service|servicio|servizio|dienst)\b/.test(t)) service+=val;
+    else if(/\b(tip|propina|pourboire)\b/.test(t)) tip+=val;
+    else if(/\b(desconto|descuento|discount|korting)\b/.test(t)) discount+=Math.abs(val);
+  }
+
+  const productSum=Math.round(rows.reduce((a,r)=>a+r.amount,0)*100)/100;
+  if(subtotal==null && rows.length) subtotal=productSum;
+
+  const expected=Math.round((productSum + tax + service + tip - discount)*100)/100;
+  const diff=total==null?null:Math.round((total-expected)*100)/100;
+  const coherent=diff==null?false:Math.abs(diff)<=0.02;
+
+  if(!totalCand)warnings.push("No s'ha pogut identificar un total fiable.");
+  else if(implicit)warnings.push("Possible total detectat sense etiqueta explícita.");
+  if(total!=null&&!coherent)warnings.push(`La suma (${expected.toFixed(2)}) no coincideix amb el total (${total.toFixed(2)}).`);
+  if(fiscalZone)warnings.push("S'ha detectat una zona fiscal; els seus imports no es consideren productes.");
+
+  const totalConfidence=totalCand
+    ? Math.min(0.995,Math.max(0.05,(totalCand.line.confidence||0.8)*(totalCand.explicit?1:0.82)))
+    : 0;
+
+  return {
+    version:"1.0",
+    currency:"EUR",
+    items:rows,
+    subtotal,
+    tax,
+    service,
+    tip,
+    discount,
+    total,
+    confidence:Math.round(((rows.length?rows.reduce((a,r)=>a+r.confidence,0)/rows.length:0)*0.45+totalConfidence*0.35+(coherent?0.2:0))*100)/100,
+    totalConfidence,
+    overallConfidence:Math.round(((rows.length?rows.reduce((a,r)=>a+r.confidence,0)/rows.length:0)*0.45+totalConfidence*0.35+(coherent?0.2:0))*100)/100,
+    needsReview:!totalCand || !coherent || rows.length===0 || rows.some(r=>r.confidence<0.8),
+    warnings,
+    validation:{productSum,expectedTotal:expected,difference:diff,coherent},
+    diagnostics:{
+      totalBoundaryIndex:totalCand?totalCand.i:null,
+      totalDetection:totalCand?{explicit:!!totalCand.explicit,score:totalCand.score,reasons:totalCand.reasons}:null,
+      ignoredAfterTotal:totalCand?lines.slice(totalCand.i+1).map(l=>l.text):[],
+      fiscalZoneDetected:fiscalZone
+    }
+  };
+}
+
 function render(r){lastResult=structuredClone(r);$("items").innerHTML="";r.items.forEach(addRow);$("count").textContent=`(${r.items.length})`;["subtotal","tax","service","tip","discount","total"].forEach(k=>$(k).value=r[k]??"");$("review").classList.toggle("hidden",!r.needsReview);$("warnings").classList.toggle("hidden",!r.warnings.length);$("warnings").innerHTML=r.warnings.join("<br>");$("summary").innerHTML=`<span>✓ ${r.items.length} productes</span><span>${r.total!=null?"✓ Total detectat":"⚠ Total no confirmat"}</span><span>${r.warnings.length?"⚠ Revisar":"✓ Càlcul coherent"}</span>`}
 function addRow(it){let d=document.createElement("div");d.className="item";d.innerHTML=`<input class="qty" type="number" min="1" value="${it.quantity}"><input class="name" value="${it.name.replaceAll('"',"&quot;")}"><input class="amount" value="${it.amount.toFixed(2)}"><button>✕</button>`;d.querySelector("button").onclick=()=>d.remove();$("items").appendChild(d)}
 function imgData(file){return new Promise((ok,no)=>{let r=new FileReader;r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)})}

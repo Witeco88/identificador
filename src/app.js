@@ -1,81 +1,38 @@
-const $=id=>document.getElementById(id);let state={img:null,canvas:null,data:null,cancel:false,worker:null};const pages=['home','scan','result','diag'];function show(p){pages.forEach(x=>$(x).classList.toggle('active',x===p));scrollTo(0,0)}function phase(n,s){for(let i=1;i<=5;i++){const e=$('p'+i);e.classList.remove('done','current');e.querySelector('b').textContent=i<n?'✓':i===n?'…':'…';if(i<n)e.classList.add('done');if(i===n)e.classList.add('current')}}function setP(v,t,d,n){$('bar').style.width=v+'%';$('percent').textContent=Math.round(v)+'%';$('phase').textContent=t;$('stage').textContent=t;$('detail').textContent=d;phase(n)}function fail(m){$('errorText').textContent=m;$('error').classList.remove('hidden');show('home')}function reset(){state.cancel=true;if(state.worker){state.worker.terminate().catch(()=>{});state.worker=null}$('error').classList.add('hidden');show('home')}async function preprocess(im){const max=1800,s=Math.min(1,max/im.naturalWidth),c=document.createElement('canvas');c.width=Math.round(im.naturalWidth*s);c.height=Math.round(im.naturalHeight*s);const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(im,0,0,c.width,c.height);const d=x.getImageData(0,0,c.width,c.height);for(let i=0;i<d.data.length;i+=4){const y=.299*d.data[i]+.587*d.data[i+1]+.114*d.data[i+2],v=Math.max(0,Math.min(255,(y-128)*1.25+128));d.data[i]=d.data[i+1]=d.data[i+2]=v}x.putImageData(d,0,0);return c}async function checkUrl(url){
-  try{const r=await fetch(url,{cache:'no-store'});return {ok:r.ok,status:r.status,contentType:r.headers.get('content-type')||''}}
-  catch(e){return {ok:false,status:0,contentType:'',error:e.message}}
-}
-async function bootOCR(){
-  const base=new URL('./ocr/',location.href);
-  const checks=[
-    ['Tesseract API','./ocr/tesseract.min.js'],
-    ['Worker','./ocr/worker.min.js'],
-    ['Core WASM JS','./ocr/core/tesseract-core.wasm.js'],
-    ['Core SIMD','./ocr/core/tesseract-core-simd.wasm.js'],
-    ['Core LSTM','./ocr/core/tesseract-core-lstm.wasm.js'],
-    ['Core SIMD LSTM','./ocr/core/tesseract-core-simd-lstm.wasm.js'],
-    ['Català','./ocr/lang/cat.traineddata.gz'],
-    ['Castellà','./ocr/lang/spa.traineddata.gz'],
-    ['Anglès','./ocr/lang/eng.traineddata.gz']
-  ];
-  const results=[];
-  for(const [name,path] of checks){const r=await checkUrl(new URL(path,location.href));results.push({name,path,...r})}
-  window.__ocrDiagnostics=results;
-  const jsOK=!!window.Tesseract && !window.__ocrScriptError;
-  const localCore=results.slice(1,6).every(x=>x.ok);
-  const langs=results.slice(6).some(x=>x.ok);
-  if(jsOK && localCore && langs){$('engine').textContent='● Motor OCR local disponible';$('engine').style.color='#23794e';return true}
-  $('engine').textContent='● Motor OCR local incomplet';$('engine').style.color='#a15c00';return false;
-}
-function reportOCR(){
-  const r=window.__ocrDiagnostics||[];
-  const lines=[`URL: ${location.href}`,`Tesseract API: ${window.Tesseract?'OK':'NO'}`,`Script error: ${window.__ocrScriptError?'SÍ':'NO'}`];
-  r.forEach(x=>lines.push(`${x.name}: ${x.ok?'OK':'ERROR'} (${x.status||'-'}) ${x.path}`));
-  return lines.join('\n');
-}
-async function scan(file){
-  if(!file)return;
-  state.cancel=false;
-  const url=URL.createObjectURL(file);
-  state.img=new Image();
-  state.img.onload=async()=>{
-    URL.revokeObjectURL(url);
-    $('scanImage').src=state.img.src;$('resultImage').src=state.img.src;$('diagImg').src=state.img.src;
-    show('scan');
-    try{
-      setP(8,'Carregant fotografia…','La fotografia s’ha obert correctament.',1);
-      await new Promise(r=>setTimeout(r,120)); if(state.cancel)return;
-      setP(22,'Preprocessant…','Millorant contrast i llegibilitat.',2);
-      state.canvas=await preprocess(state.img); if(state.cancel)return;
-
-      setP(35,'Comprovant motor OCR…','Verificant els recursos locals.',3);
-      const ready=await bootOCR();
-      if(!ready) throw Error('El motor OCR local no està complet. Obre “Diagnòstic del motor” a la pantalla inicial.');
-
-      setP(48,'Iniciant motor OCR…','Creant el worker local.',3);
-      state.worker=await Tesseract.createWorker('spa+eng+fra+ita+por+cat',1,{
-        workerPath:new URL('./ocr/worker.min.js',location.href).href,
-        corePath:new URL('./ocr/core',location.href).href,
-        langPath:new URL('./ocr/lang',location.href).href,
-        logger:m=>{
-          if(m.status==='loading tesseract core') setP(48+(m.progress||0)*10,'Carregant motor OCR…','Carregant WebAssembly local.',3);
-          else if(m.status==='loading language traineddata') setP(58+(m.progress||0)*10,'Carregant idiomes…','Carregant models locals.',3);
-          else if(m.status==='recognizing text') setP(68+(m.progress||0)*29,'Llegint text…','Detectant paraules, línies i coordenades.',4);
-        }
-      });
-      if(state.cancel)return;
-      const r=await state.worker.recognize(state.canvas);
-      state.data=r.data;
-      await state.worker.terminate(); state.worker=null;
-      if(state.cancel)return;
-      setP(98,'Preparant resultat…','Organitzant la lectura OCR.',5);
-      render(); setP(100,'Lectura completada','Resultat preparat.',5); phase(6);
-      setTimeout(()=>show('result'),180);
-    }catch(e){console.error(e);fail(e.message||'Error desconegut')}
-  };
-  state.img.onerror=()=>fail('No s’ha pogut obrir la fotografia.');
-  state.img.src=url;
-}
-function render(){const d=state.data,w=(d.words||[]).filter(x=>x.text.trim()),l=(d.lines||[]).filter(x=>x.text.trim()),avg=w.length?w.reduce((a,x)=>a+(+x.confidence||0),0)/w.length:0;$('lines').textContent=l.length;$('words').textContent=w.length;$('conf').textContent=Math.round(avg)+'%';$('summary').textContent=`${l.length} línies · ${w.length} blocs · ${Math.round(avg)}% confiança`;$('text').innerHTML='';l.forEach(x=>{const e=document.createElement('div');e.className='ocr-line';e.innerHTML='<span></span><small></small>';e.firstChild.textContent=x.text;e.lastChild.textContent=Math.round(x.confidence||0)+'%';$('text').appendChild(e)});$('raw').textContent=d.text||'';const p=$('processed');p.width=state.canvas.width;p.height=state.canvas.height;p.getContext('2d').drawImage(state.canvas,0,0);const b=$('boxes');b.width=state.canvas.width;b.height=state.canvas.height;const c=b.getContext('2d');c.drawImage(state.canvas,0,0);w.forEach(x=>{const q=x.bbox;c.strokeRect(q.x0,q.y0,q.x1-q.x0,q.y1-q.y0)});$('blocks').innerHTML='';w.forEach((x,i)=>{const q=x.bbox,e=document.createElement('div');e.className='block';e.textContent=`#${i+1} · ${x.text} · ${Math.round(x.confidence||0)}% · x=${q.x0}, y=${q.y0}, w=${q.x1-q.x0}, h=${q.y1-q.y0}`;$('blocks').appendChild(e)})}$('camera').onchange=e=>scan(e.target.files[0]);$('file').onchange=e=>scan(e.target.files[0]);$('cancel').onclick=reset;$('cancel2').onclick=reset;$('again').onclick=reset;$('diagnostic').onclick=()=>show('diag');$('diagBack').onclick=()=>show('result');$('retry').onclick=reset;window.addEventListener('load',async()=>{
-  const ok=await bootOCR();
-  $('engineDiag').onclick=()=>{$('engineReport').textContent=reportOCR();$('engineModal').classList.remove('hidden')};
-  $('closeEngine').onclick=()=>$('engineModal').classList.add('hidden');
-});
-if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+const $=id=>document.getElementById(id);
+const V={home:$("home"),processing:$("processing"),result:$("result"),diagnostic:$("diagnostic")};
+let lastResult=null,lastLines=[],lastOCR=null;
+const moneyRe=/(?:€\s*)?(?:\d{1,3}(?:[.\s]\d{3})+|\d+)(?:[,.]\d{2})(?:\s*€)?|(?:€\s*)\d+(?:[,.]\d{2})(?:\s*€)?|\b\d+\s*€\b/g;
+const labels={
+total:/\b(total|totaal|totale|grand\s+total|amount\s+due|importe\s+total|montant\s+total)\b/i,
+subtotal:/\b(subtotal|sub\s*total|sous[- ]total)\b/i,
+tax:/\b(iva|vat|tax|taxe|impuesto|impostos|btw|tva)\b/i,
+service:/\b(service|servicio|servei|servizio|service\s+charge|servico)\b/i,
+tip:/\b(tip|tips|propina|pourboire|mancia|gorjeta)\b/i,
+discount:/\b(discount|descuento|descompte|remise|sconto|desconto)\b/i,
+payment:/\b(visa|mastercard|cash|payment|card|tarjeta|kaart|pagament)\b/i,
+footer:/\b(thank|gracias|gràcies|merci|grazie|obrigad|www\.|http)\b/i};
+function show(x){Object.values(V).forEach(v=>v.classList.add("hidden"));x.classList.remove("hidden")}
+function prog(p,t){$("pb").style.width=p+"%";$("pp").textContent=Math.round(p)+"%";$("pl").textContent=t}
+function pm(s){let t=String(s).replace(/[€\s]/g,"");if(t.includes(",")&&t.includes(".")){t=t.lastIndexOf(",")>t.lastIndexOf(".")?t.replace(/\./g,"").replace(",","."):t.replace(/,/g,"")}else if(t.includes(","))t=t.replace(",",".");let n=Number(t);return Number.isFinite(n)?Math.round(n*100)/100:null}
+function money(s){let m=[...String(s).matchAll(moneyRe)].pop();return m?{value:pm(m[0]),raw:m[0]}:null}
+function totalLike(s){let n=String(s).toLowerCase().replace(/0/g,"o").replace(/1/g,"i").replace(/[^a-zà-ÿ]/g,"");return labels.total.test(s)||["totao","totai","totai","tota1"].some(x=>n.includes(x))}
+function type(s){if(totalLike(s))return"TOTAL";if(labels.subtotal.test(s))return"SUBTOTAL";if(labels.tax.test(s))return"TAX";if(labels.service.test(s))return"SERVICE";if(labels.tip.test(s))return"TIP";if(labels.discount.test(s))return"DISCOUNT";if(labels.payment.test(s))return"PAYMENT";if(labels.footer.test(s))return"FOOTER";return"UNKNOWN"}
+function linesFromWords(words){let a=words.filter(w=>w.text?.trim()).sort((x,y)=>x.bbox.y0-y.bbox.y0||x.bbox.x0-y.bbox.x0),g=[];for(const w of a){let cy=(w.bbox.y0+w.bbox.y1)/2,h=w.bbox.y1-w.bbox.y0,z=g.find(q=>Math.abs(cy-q.cy)<=Math.max(h,q.h)*.55);if(!z){z={words:[],cy,h};g.push(z)}z.words.push(w);z.cy=(z.cy*(z.words.length-1)+cy)/z.words.length;z.h=Math.max(z.h,h)}return g.sort((a,b)=>a.cy-b.cy).map((q,i)=>{q.words.sort((a,b)=>a.bbox.x0-b.bbox.x0);let text=q.words.map(w=>w.text).join(" ").replace(/\s+/g," ").trim(),c=q.words.reduce((s,w)=>s+(Number(w.confidence)||0),0)/q.words.length/100;return{id:"line-"+(i+1),text,confidence:c,money:money(text),y:q.cy}})}
+function lineData(d){if(d.words?.length)return linesFromWords(d.words);if(d.lines?.length)return d.lines.map((l,i)=>({id:"line-"+(i+1),text:l.text.trim(),confidence:(l.confidence||0)/100,money:money(l.text),y:l.bbox?.y0||i}));return String(d.text||"").split(/\n+/).map((text,i)=>({id:"line-"+(i+1),text:text.trim(),confidence:0,money:money(text),y:i})).filter(x=>x.text)}
+function productName(s,m){let n=s.replace(m?.raw||"","").replace(/^[-–—•#]/,"").trim(),q=1,x=n.match(/^(\d+)\s*(?:x|×|\*)\s*/i);if(x){q=+x[1];n=n.slice(x[0].length).trim()}else{x=n.match(/^(\d+)\s+(?=[A-Za-zÀ-ÿ])/);if(x){q=+x[1];n=n.slice(x[0].length).trim()}}return{name:n||"Concepte sense nom",quantity:q}}
+function parse(lines){let wi=-1;for(let i=0;i<lines.length;i++)if(totalLike(lines[i].text)&&lines[i].money) {wi=i;break}
+let implicit=false,w=[];if(wi<0){let m=lines.map((l,i)=>({l,i})).filter(x=>x.l.money);if(m.length>1){let last=m.at(-1),prior=m.slice(0,-1).filter(x=>type(x.l.text)==="UNKNOWN");let sum=prior.reduce((s,x)=>s+x.l.money.value,0);if(Math.abs(sum-last.l.money.value)<=.02){wi=last.i;implicit=true;w.push("Possible total detectat sense etiqueta explícita.")}}}
+let before=wi>=0?lines.slice(0,wi):lines,items=[],special={subtotal:null,tax:null,service:0,tip:0,discount:0},cls=[];
+for(const l of before){let t=type(l.text);cls.push({line:l.text,type:t,amount:l.money?.value??null});if(["SUBTOTAL","TAX","SERVICE","TIP","DISCOUNT"].includes(t)&&l.money){let k=t==="TAX"?"tax":t.toLowerCase();special[k]=l.money.value}else if(t==="UNKNOWN"&&l.money){let p=productName(l.text,l.money);items.push({id:"item-"+(items.length+1),name:p.name,quantity:p.quantity,amount:l.money.value,confidence:Math.max(.01,Math.min(1,l.confidence||.5))});}}
+let total=wi>=0?lines[wi].money.value:null,sum=items.reduce((s,x)=>s+x.amount,0),warnings=[...w];if(total==null)warnings.push("No s'ha pogut identificar el TOTAL.");let calc=sum+(special.tax||0)+special.service+special.tip-special.discount;if(total!=null&&Math.abs(calc-total)>.02)warnings.push(`Càlcul inconsistent: ${calc.toFixed(2)} € vs ${total.toFixed(2)} €.`);if(items.some(x=>x.confidence<.75))warnings.push("Una o més línies tenen OCR amb baixa confiança.");
+return{version:"1.0",currency:"EUR",items,subtotal:special.subtotal??Math.round(sum*100)/100,tax:special.tax,service:special.service,tip:special.tip,discount:special.discount,total,confidence:Number((items.length?items.reduce((s,x)=>s+x.confidence,0)/items.length:.5).toFixed(2)),needsReview:warnings.length>0,warnings,diagnostics:{explicitTotal:!implicit,totalLineIndex:wi,ignoredAfterTotal:wi>=0?lines.slice(wi+1).map(x=>x.text):[],classifications:cls}}}
+function render(r){lastResult=structuredClone(r);$("items").innerHTML="";r.items.forEach(addRow);$("count").textContent=`(${r.items.length})`;["subtotal","tax","service","tip","discount","total"].forEach(k=>$(k).value=r[k]??"");$("review").classList.toggle("hidden",!r.needsReview);$("warnings").classList.toggle("hidden",!r.warnings.length);$("warnings").innerHTML=r.warnings.join("<br>");$("summary").innerHTML=`<span>✓ ${r.items.length} productes</span><span>${r.total!=null?"✓ Total detectat":"⚠ Total no confirmat"}</span><span>${r.warnings.length?"⚠ Revisar":"✓ Càlcul coherent"}</span>`}
+function addRow(it){let d=document.createElement("div");d.className="item";d.innerHTML=`<input class="qty" type="number" min="1" value="${it.quantity}"><input class="name" value="${it.name.replaceAll('"',"&quot;")}"><input class="amount" value="${it.amount.toFixed(2)}"><button>✕</button>`;d.querySelector("button").onclick=()=>d.remove();$("items").appendChild(d)}
+function imgData(file){return new Promise((ok,no)=>{let r=new FileReader;r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)})}
+function image(src){return new Promise((ok,no)=>{let i=new Image;i.onload=()=>ok(i);i.onerror=no;i.src=src})}
+function prep(i){let s=Math.min(2,1800/i.width),c=document.createElement("canvas");c.width=i.width*s;c.height=i.height*s;let x=c.getContext("2d");x.drawImage(i,0,0,c.width,c.height);let d=x.getImageData(0,0,c.width,c.height);for(let j=0;j<d.data.length;j+=4){let y=.299*d.data[j]+.587*d.data[j+1]+.114*d.data[j+2],v=Math.max(0,Math.min(255,(y-128)*1.4+128));d.data[j]=d.data[j+1]=d.data[j+2]=v}x.putImageData(d,0,0);return c}
+async function process(file){show(V.processing);prog(5,"Carregant fotografia…");let src=await imgData(file),im=await image(src);prog(15,"Preprocessant fotografia…");let canvas=prep(im);if(!window.Tesseract)throw Error("Motor OCR local no disponible.");prog(25,"Iniciant OCR…");let worker=await Tesseract.createWorker(["cat","spa","eng"],1,{workerPath:"./ocr/worker.min.js",corePath:"./ocr/core",langPath:"./ocr/lang",logger:m=>prog(25+Math.round((m.progress||0)*60),"OCR: "+(m.status||"processant"))});try{let r=await worker.recognize(canvas);lastOCR=r.data;lastLines=lineData(r.data);$("ot").textContent=r.data.text||"—";$("lt").textContent=lastLines.map(x=>`${x.text} | ${x.money?.value??"-"} | conf ${x.confidence.toFixed(2)}`).join("\n");let out=parse(lastLines);$("ct").textContent=out.diagnostics.classifications.map(x=>`${x.type.padEnd(10)} | ${x.amount??"-"} | ${x.line}`).join("\n");prog(100,"Lectura completada");render(out);show(V.result)}finally{await worker.terminate()}}
+$("camera").onclick=()=>$("cameraInput").click();$("gallery").onclick=()=>$("galleryInput").click();$("cameraInput").onchange=e=>e.target.files[0]&&process(e.target.files[0]).catch(e=>{show(V.home);$("status").textContent="⚠️ "+e.message});$("galleryInput").onchange=e=>e.target.files[0]&&process(e.target.files[0]).catch(e=>{show(V.home);$("status").textContent="⚠️ "+e.message});
+$("diag").onclick=async()=>{show(V.diagnostic);let p=["./ocr/tesseract.min.js","./ocr/worker.min.js","./ocr/core/tesseract-core.wasm.js","./ocr/core/tesseract-core-simd.wasm.js","./ocr/core/tesseract-core-lstm.wasm.js","./ocr/core/tesseract-core-simd-lstm.wasm.js","./ocr/lang/cat.traineddata.gz","./ocr/lang/spa.traineddata.gz","./ocr/lang/eng.traineddata.gz"],a=[window.Tesseract?"Tesseract API: OK":"Tesseract API: NO"];for(let x of p){try{let r=await fetch(x,{cache:"no-store"});a.push(`${x}: ${r.ok?"OK":"ERROR ("+r.status+")"}`)}catch{a.push(`${x}: ERROR`)}}$("dout").textContent=a.join("\n")};$("close").onclick=()=>show(lastResult?V.result:V.home);
+$("add").onclick=()=>addRow({quantity:1,name:"",amount:0});$("new").onclick=()=>{lastResult=null;show(V.home)};$("json").onclick=()=>{let b=new Blob([JSON.stringify(lastResult,null,2)],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="ticket-result.json";a.click()};
+$("status").textContent=window.Tesseract?"✓ Motor OCR carregat. Pots seleccionar una fotografia.":"⚠️ Motor OCR no carregat. Revisa el desplegament de GitHub Pages.";

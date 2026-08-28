@@ -209,8 +209,6 @@ function parse(lines){
   if(totalCand?.line?.money?.value!=null){
     productCandidates=recoverDroppedLastItems(lines,boundary,productCandidates,totalCand.line.money.value);
   }
-  const productCandidates=itemRowsBefore(lines,boundary);
-
   // Detect a fiscal/table zone. A row with fiscal language or a repeated
   // multi-amount structure is never promoted to PRODUCT.
   let fiscalZone=false, rows=[];

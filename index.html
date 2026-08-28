@@ -21,7 +21,8 @@
     <label class="action"><span>🖼️</span><div><b>SELECCIONAR FOTO</b><small>Fotos o Fitxers</small></div><i>›</i><input id="file" type="file" accept="image/*"></label>
   </div>
   <div class="privacy">🔒 Processament local · PWA · compatible amb GitHub Pages</div>
-  <div id="engine" class="engine">Preparant motor OCR…</div>
+  <div id="engine" class="engine">Comprovant motor OCR…</div>
+  <button id="engineDiag" class="engine-diag">Diagnòstic del motor</button>
 </section>
 
 <section id="scan" class="page">
@@ -60,7 +61,8 @@
 
 <div id="error" class="error hidden"><div><b>⚠️ No s'ha pogut llegir el tiquet</b><p id="errorText"></p><button id="retry">Tornar a provar</button></div></div>
 </div>
-<script src="ocr/tesseract.min.js"></script>
+<script src="ocr/tesseract.min.js" onerror="window.__ocrScriptError=true"></script>
 <script src="src/app.js"></script>
+<div id="engineModal" class="error hidden"><div><b>Diagnòstic del motor OCR</b><div id="engineReport" class="engine-report"></div><button id="closeEngine">Tancar</button></div></div>
 </body>
 </html>
